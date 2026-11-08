@@ -1,0 +1,6 @@
+node_modules/
+.env
+public/models/*.task
+public/models/*.download
+npm-debug.log*
+.DS_Store

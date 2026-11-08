@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="kk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ым → Орыс тілі</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Ым <span aria-hidden="true">→</span><span class="sr-only">тілінен</span> Орыс тілі</h1>
+    <ul class="status" aria-label="Күй">
+      <li id="st-camera" class="pill" data-state="off">Камера</li>
+      <li id="st-model" class="pill" data-state="off">Модель</li>
+      <li id="st-gesture" class="pill" data-state="off">Жест жазылуда</li>
+      <li id="st-ai" class="pill" data-state="off">AI ойлануда</li>
+    </ul>
+  </header>
+
+  <main class="layout">
+    <!-- Left: camera + controls + training -->
+    <section class="panel camera-panel" aria-labelledby="cam-title">
+      <h2 id="cam-title" class="sr-only">Камера</h2>
+      <div class="stage" id="stage">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="stage-placeholder" id="placeholder">
+          <p>Камераны қосып, қолыңызды кадрда көрсетіңіз.</p>
+          <button id="btn-camera" class="btn primary" type="button">Камераны қосу</button>
+        </div>
+        <div class="countdown" id="countdown" hidden aria-live="assertive"></div>
+        <div class="motion" aria-hidden="true"><div id="motion-bar"></div></div>
+      </div>
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <div class="controls">
+        <fieldset class="segmented" id="modes">
+          <legend class="sr-only">Режим</legend>
+          <label><input type="radio" name="mode" value="custom" checked><span>Менің жестерім</span></label>
+          <label><input type="radio" name="mode" value="ai"><span>AI аудармашы</span></label>
+          <label><input type="radio" name="mode" value="hybrid"><span>Аралас</span></label>
+        </fieldset>
+        <div class="row">
+          <label class="field">
+            <span>Ым тілі</span>
+            <select id="sign-lang">
+              <option value="auto">Авто</option>
+              <option value="rsl">Орыс ым тілі</option>
+              <option value="ksl">Қазақ ым тілі</option>
+            </select>
+          </label>
+          <button id="btn-translate" class="btn" type="button" disabled
+                  title="Соңғы ~2 секундты AI-ға жіберу">Аудару</button>
+        </div>
+        <p id="ai-hint" class="hint" hidden>
+          AI режимі өшірулі: серверде <code>ANTHROPIC_API_KEY</code> орнатып, қайта іске қосыңыз.
+        </p>
+      </div>
+
+      <details class="training" id="training" open>
+        <summary>Жаттығу: өз жестеріңізді жазу</summary>
+        <form id="train-form" class="row" autocomplete="off">
+          <label class="field grow">
+            <span>Сөз (орысша)</span>
+            <input id="label-input" type="text" placeholder="мысалы: привет" maxlength="60" required>
+          </label>
+          <button id="btn-record" class="btn primary" type="submit" disabled>Жазу</button>
+        </form>
+        <p class="hint">Әр сөзге кемінде 3 мысал жазу ұсынылады. «Жазу» басылғаннан кейін 3-2-1 санағы болады, содан соң жестті бір рет көрсетіңіз.</p>
+        <ul id="labels" class="labels" aria-label="Жазылған сөздер"></ul>
+        <div class="row">
+          <button id="btn-export" class="btn" type="button">Экспорт</button>
+          <label class="btn" for="import-file" tabindex="0" id="import-label">Импорт</label>
+          <input id="import-file" type="file" accept="application/json,.json" class="sr-only">
+          <button id="btn-clear-gestures" class="btn danger" type="button">Барлығын өшіру</button>
+        </div>
+      </details>
+    </section>
+
+    <!-- Right: output -->
+    <section class="panel output-panel" aria-labelledby="out-title">
+      <h2 id="out-title" class="sr-only">Аударма</h2>
+      <div class="sentence-box">
+        <p id="sentence" class="sentence" lang="ru" aria-live="polite"><span class="placeholder">Аударма осында шығады…</span></p>
+        <div id="badge" class="badge" hidden></div>
+      </div>
+      <div class="row actions">
+        <button id="btn-clear" class="btn" type="button">Тазалау</button>
+        <button id="btn-speak" class="btn" type="button">Дауыстау</button>
+        <button id="btn-copy" class="btn" type="button">Көшіру</button>
+        <label class="toggle">
+          <input id="auto-speak" type="checkbox">
+          <span>Автоматты дауыстау</span>
+        </label>
+      </div>
+      <h3 class="history-title">Тарих</h3>
+      <ol id="history" class="history" reversed></ol>
+    </section>
+  </main>
+</body>
+</html>
