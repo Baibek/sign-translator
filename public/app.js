@@ -1,11 +1,12 @@
 // app.js — UI glue: camera, MediaPipe hand tracking, segmentation,
 // custom (DTW) recognition, AI translation, training and output.
-import { FilesetResolver, HandLandmarker, DrawingUtils } from "/vendor/tasks-vision/vision_bundle.mjs";
+import { FilesetResolver, HandLandmarker, DrawingUtils } from "./vendor/tasks-vision/vision_bundle.mjs";
 import { frameFeatures, handsInFeatures, GestureClassifier, Segmenter } from "./recognizer.js";
 
 // ---------- constants ----------
-const WASM_PATH = "/vendor/tasks-vision/wasm";
-const MODEL_PATH = "/models/hand_landmarker.task";
+// Relative URLs so the app works both from the Node server and as a static site (GitHub Pages subpath)
+const WASM_PATH = new URL("./vendor/tasks-vision/wasm", import.meta.url).href;
+const MODEL_PATH = new URL("./models/hand_landmarker.task", import.meta.url).href;
 const STORE_GESTURES = "ym.gestures.v1";
 const STORE_SETTINGS = "ym.settings.v1";
 const SNAP_WIDTH = 480;
@@ -320,7 +321,7 @@ async function runAI(frames) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 45000);
   try {
-    const resp = await fetch("/api/translate", {
+    const resp = await fetch(new URL("./api/translate", import.meta.url), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ frames, context: state.words.slice(-CONTEXT_WORDS), signLanguage: el.signLang.value }),
@@ -610,18 +611,24 @@ function updateButtons() {
 
 async function checkHealth() {
   try {
-    const r = await fetch("/api/health", { cache: "no-store" });
+    const r = await fetch(new URL("./api/health", import.meta.url), { cache: "no-store" });
     const data = await r.json();
     state.aiAvailable = !!(data && data.ai);
+    state.staticSite = false;
   } catch {
+    // No backend (e.g. GitHub Pages): only the offline "Менің жестерім" mode works
     state.aiAvailable = false;
+    state.staticSite = true;
+  }
+  if (state.staticSite) {
+    el.aiHint.textContent = "Бұл сайт нұсқасы: «Менің жестерім» режимі толық жұмыс істейді. AI режимі тек сервермен іске қосылған толық нұсқада бар (README қараңыз).";
   }
   for (const input of el.modes.querySelectorAll("input")) {
     if (input.value !== "custom") input.disabled = !state.aiAvailable;
   }
   el.aiHint.hidden = state.aiAvailable;
   setStatus("ai", state.aiAvailable ? "off" : "error");
-  el.st.ai.title = state.aiAvailable ? "" : "AI өшірулі (ANTHROPIC_API_KEY жоқ)";
+  el.st.ai.title = state.aiAvailable ? "" : (state.staticSite ? "AI тек толық нұсқада" : "AI өшірулі (ANTHROPIC_API_KEY жоқ)");
   updateButtons();
 }
 

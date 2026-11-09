@@ -12,7 +12,8 @@
     "setup": "node scripts/fetch-model.mjs",
     "postinstall": "node scripts/fetch-model.mjs --optional",
     "start": "node server.js",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "build:static": "node scripts/build-static.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.6.0",

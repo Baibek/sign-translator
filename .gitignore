@@ -4,3 +4,4 @@ public/models/*.task
 public/models/*.download
 npm-debug.log*
 .DS_Store
+dist/
