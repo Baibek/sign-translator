@@ -1,0 +1,40 @@
+name: Build sign dictionary (Slovo)
+
+# Downloads the open Slovo dataset landmarks (~1.2 GB), picks one clear sample per sign and
+# commits a compact word dictionary to public/signs/ru/. Run it manually from the Actions tab.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ijson
+      - name: Download landmarks
+        run: curl -L --fail --retry 5 -o slovo_mediapipe.json https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/slovo/slovo_mediapipe.json
+      - name: Build dictionary
+        run: |
+          rm -rf public/signs/ru
+          python scripts/build-slovo-dictionary.py --landmarks slovo_mediapipe.json
+          du -sh public/signs/ru && ls public/signs/ru | wc -l
+      - name: Commit dictionary
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898900+github-actions[bot]@users.noreply.github.com"
+          git add public/signs
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Update RSL sign dictionary from Slovo dataset"
+          git push
+      - name: Redeploy the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main

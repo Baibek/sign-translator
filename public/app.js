@@ -2,7 +2,7 @@
 // custom (DTW) recognition, AI translation, training and output.
 import { FilesetResolver, HandLandmarker, DrawingUtils } from "./vendor/tasks-vision/vision_bundle.mjs";
 import { frameFeatures, handsInFeatures, GestureClassifier, Segmenter } from "./recognizer.js";
-import { planSigns, buildClips, SignPlayer } from "./signer.js";
+import { planSigns, buildClips, decodeDictionarySign, SignPlayer } from "./signer.js";
 
 // ---------- constants ----------
 // Relative URLs so the app works both from the Node server and as a static site (GitHub Pages subpath)
@@ -635,6 +635,33 @@ async function checkHealth() {
 
 // ---------- text → sign ----------
 let signPlayer = null;
+// Built-in RSL word dictionary (built from the open Slovo dataset by scripts/build-slovo-dictionary.py)
+const DICT_BASE = new URL("./signs/ru/", import.meta.url);
+const dict = { words: {}, loaded: false, cache: new Map() };
+async function loadDictionary() {
+  try {
+    const r = await fetch(new URL("index.json", DICT_BASE));
+    if (!r.ok) throw new Error(r.status);
+    dict.words = (await r.json()).words || {};
+  } catch {
+    dict.words = {}; // no dictionary deployed: recorded gestures + fingerspelling only
+  }
+  dict.loaded = true;
+  const n = Object.keys(dict.words).length;
+  $("t2s-dict").textContent = n
+    ? `Кірістірілген сөздік: орыс ым тілінің ${n} сөзі (Slovo жинағы, SberDevices, CC BY-SA 4.0).`
+    : "";
+}
+async function fetchDictionarySigns(labels) {
+  await Promise.all(labels.filter((l) => !dict.cache.has(l)).map(async (label) => {
+    try {
+      const r = await fetch(new URL(`${dict.words[label]}.json`, DICT_BASE));
+      dict.cache.set(label, r.ok ? await r.json() : null);
+    } catch {
+      dict.cache.set(label, null);
+    }
+  }));
+}
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -649,24 +676,37 @@ function renderPlan(plan, current = -1) {
     s.textContent = p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text;
     if (p.type === "missing") { s.className = "missing"; s.title = "Бұл сөзді көрсету мүмкін емес"; }
     if (p.source === "builtin") s.classList.add("builtin");
+    if (p.source === "dictionary") s.title = "Slovo сөздігінен";
     if (i === current) s.classList.add("now");
     return s;
   }));
 }
-function playText() {
+async function playText() {
   const text = $("t2s-input").value.trim();
   if (!text) { signPlayer.clear("Мәтін жазыңыз"); renderPlan([]); return; }
-  const plan = planSigns(text, classifier.labels());
+  if (!dict.loaded) await loadDictionary();
+  const plan = planSigns(text, classifier.labels(), { dictionary: Object.keys(dict.words) });
   renderPlan(plan);
-  const playable = buildClips(plan, (label) => classifier.examples.get(label)?.[0], { aspect: signPlayer.aspect });
+  const needed = [...new Set(plan.filter((p) => p.source === "dictionary").map((p) => p.label))];
+  if (needed.length) await fetchDictionarySigns(needed);
+  const playable = buildClips(plan, (label) => classifier.examples.get(label)?.[0], {
+    aspect: signPlayer.aspect,
+    getDictionary: (label) => {
+      const data = dict.cache.get(label);
+      return data ? decodeDictionarySign(data, signPlayer.aspect) : null;
+    },
+  });
   const missing = plan.filter((p) => p.type === "missing").map((p) => p.text);
   const spelled = [...new Set(plan.filter((p) => p.source === "builtin").map((p) => p.word))];
   const notes = [];
+  const fromDict = [...new Set(plan.filter((p) => p.source === "dictionary").map((p) => p.text))];
+  if (fromDict.length) notes.push(`Сөздіктен сөз-жестпен көрсетілді: ${fromDict.join(", ")}.`);
   if (spelled.length) notes.push(`Дактильмен (әріп-әріп) көрсетілді: ${spelled.join(", ")}. Кірістірілген әріп пішіндері жуық, маманмен тексеру керек.`);
   if (plan.some((p) => p.source === "builtin" && "әғқңөұүһі".includes(p.text.toLocaleLowerCase("kk"))))
     notes.push("Қазақтың ә, ғ, қ, ң, ө, ұ, ү, һ, і әріптері әзірге ең жақын орыс әрпінің пішінімен көрсетіледі.");
   if (missing.length) notes.push(`Көрсету мүмкін емес: ${missing.join(", ")}.`);
   if (!notes.length) notes.push("Барлық сөз сіз жазған жестермен көрсетілді.");
+  if (!Object.keys(dict.words).length) notes.push("Кірістірілген сөз сөздігі әлі орнатылмаған, сондықтан сөздер әріппен көрсетілді.");
   $("t2s-hint").textContent = notes.join(" ");
   if (!playable.length) { signPlayer.clear("Жазылған жест табылмады"); return; }
   signPlayer.play(playable, {
@@ -677,6 +717,7 @@ function playText() {
 function initTextToSign() {
   signPlayer = new SignPlayer($("t2s-canvas"), { colors: t2sColors });
   signPlayer.clear("Мәтін жазып, «Көрсету» басыңыз");
+  loadDictionary();
   $("t2s-form").addEventListener("submit", (e) => { e.preventDefault(); playText(); });
   $("t2s-sentence").addEventListener("click", () => {
     const t = sentenceText();

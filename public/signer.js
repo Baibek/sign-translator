@@ -28,11 +28,28 @@ export function tokenize(text) {
 
 /**
  * Plan how to show `text`.
- * Recorded labels match first (multi-word labels greedily, longest first). Other words are fingerspelled:
+ * Recorded labels match first (multi-word labels greedily, longest first), then the built-in word dictionary
+ * (with a simple inflection fallback). Other words are fingerspelled:
  * a recorded letter if there is one, else the built-in dactyl shape. Characters with neither are "missing".
- * @returns {{type:"sign"|"letter"|"missing", source?:"recorded"|"builtin", label?:string, text:string, word?:string}[]}
+ * @returns {{type:"sign"|"letter"|"missing", source?:"recorded"|"dictionary"|"builtin", label?:string, text:string, word?:string}[]}
  */
-export function planSigns(text, labels, { builtin = true } = {}) {
+// Simple Russian inflection fallback: "дела" → "дело", "маме" → "мама" (only used for the built-in dictionary)
+const ENDINGS = ["ами", "ями", "ого", "его", "ому", "ему", "ыми", "ими", "ах", "ях", "ам", "ям", "ом", "ем", "ой", "ей", "ую", "юю",
+  "ые", "ие", "ых", "их", "ов", "ев", "ть", "а", "я", "у", "ю", "ы", "и", "е", "о", "ь"];
+const BASE_ENDINGS = ["", "а", "я", "о", "е", "ь", "ть", "ый", "ий", "ой"];
+export function wordCandidates(word) {
+  const w = norm(word);
+  const out = [w];
+  if (w.length < 4) return out;
+  for (const e of ENDINGS) {
+    if (!w.endsWith(e) || w.length - e.length < 3) continue;
+    const stem = w.slice(0, -e.length);
+    for (const b of BASE_ENDINGS) out.push(stem + b);
+  }
+  return [...new Set(out)];
+}
+
+export function planSigns(text, labels, { builtin = true, dictionary = [] } = {}) {
   const byKey = new Map();
   let maxWords = 1;
   for (const label of labels) {
@@ -41,9 +58,25 @@ export function planSigns(text, labels, { builtin = true } = {}) {
     if (!byKey.has(key)) byKey.set(key, label);
     maxWords = Math.max(maxWords, key.split(" ").length);
   }
+  const dict = new Map();
+  let dictMaxWords = 1;
+  for (const w of dictionary) {
+    const key = tokenize(w).map(norm).join(" ");
+    if (!key || dict.has(key)) continue;
+    dict.set(key, w);
+    dictMaxWords = Math.max(dictMaxWords, key.split(" ").length);
+  }
   const words = tokenize(text);
   const keys = words.map(norm);
   const plan = [];
+  const dictMatch = (i) => {
+    for (let n = Math.min(dictMaxWords, words.length - i); n >= 1; n--) {
+      const key = keys.slice(i, i + n).join(" ");
+      if (dict.has(key)) return { n, label: dict.get(key) };
+    }
+    for (const c of wordCandidates(words[i])) if (dict.has(c)) return { n: 1, label: dict.get(c) };
+    return null;
+  };
   for (let i = 0; i < words.length; ) {
     let matched = false;
     for (let n = Math.min(maxWords, words.length - i); n >= 1; n--) {
@@ -56,6 +89,12 @@ export function planSigns(text, labels, { builtin = true } = {}) {
       }
     }
     if (matched) continue;
+    const dm = dictMatch(i);
+    if (dm) {
+      plan.push({ type: "sign", source: "dictionary", label: dm.label, text: words.slice(i, i + dm.n).join(" ") });
+      i += dm.n;
+      continue;
+    }
     const word = words[i];
     const letters = [...word.toLocaleLowerCase("ru")];
     const canSpell = letters.every((ch) => byKey.has(norm(ch)) || (builtin && hasDactyl(ch)));
@@ -92,14 +131,50 @@ export function framePoints(f, { scale = 0.14, mirror = true } = {}) {
   return hands;
 }
 
-/** Build player clips from a plan. `getFrames(label)` returns a recorded feature sequence or null. */
-export function buildClips(plan, getFrames, { aspect = 1.6 } = {}) {
+/**
+ * Decode a dictionary sign file ({aspect, frames:[[ [slot, x,y,z ×21] ]]}, coords ×1000 in video space)
+ * into canvas-normalized hands. The whole clip is fitted into the canvas with one scale so motion is kept.
+ */
+export function decodeDictionarySign(data, canvasAspect = 1.6) {
+  const va = data.aspect || 9 / 16; // video width / height
+  const frames = data.frames.map((hands) => hands.map(([slot, ...flat]) => {
+    const pts = [];
+    for (let k = 0; k < 21; k++) pts.push([(flat[k * 3] / 1000) * va, flat[k * 3 + 1] / 1000, -(flat[k * 3 + 2] / 1000) * va]);
+    return { slot, pts };
+  }));
+  // bounding box (in video-height units) and typical palm size
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, palm = 0, np = 0;
+  for (const f of frames) for (const h of f) {
+    for (const [x, y] of h.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    palm += Math.hypot(h.pts[9][0] - h.pts[0][0], h.pts[9][1] - h.pts[0][1]); np++;
+  }
+  if (!np) return [];
+  palm /= np;
+  // fit into the canvas (height = 1, width = canvasAspect) with margins; cap zoom so a palm is ≤ 30% of the height
+  const s = Math.min((canvasAspect * 0.8) / Math.max(x1 - x0, 1e-3), 0.72 / Math.max(y1 - y0, 1e-3), 0.3 / Math.max(palm, 1e-3));
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  return frames.map((f) => f.map((h) => ({
+    slot: h.slot,
+    pts: h.pts.map(([x, y, z]) => [0.5 + ((x - cx) * s) / canvasAspect, 0.46 + (y - cy) * s, z * s]),
+  })));
+}
+
+/**
+ * Build player clips from a plan. `getFrames(label)` returns a recorded feature sequence or null;
+ * `getDictionary(label)` returns decoded dictionary frames (decodeDictionarySign) or null.
+ */
+export function buildClips(plan, getFrames, { aspect = 1.6, getDictionary = () => null } = {}) {
   const clips = [];
   plan.forEach((p, i) => {
     if (p.type === "missing") return;
     const caption = p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text;
     if (p.source === "builtin") {
       clips.push({ i, frames: letterFrames(dactylKey(p.text), 16, { aspect }), caption, ms: 650, builtin: true });
+      return;
+    }
+    if (p.source === "dictionary") {
+      const frames = getDictionary(p.label);
+      if (frames && frames.length) clips.push({ i, frames, caption, ms: 1500, dictionary: true });
       return;
     }
     const seq = getFrames(p.label);

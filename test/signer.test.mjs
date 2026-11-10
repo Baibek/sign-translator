@@ -49,3 +49,23 @@ test("framePoints rebuilds a mirrored hand from features", () => {
   assert.equal(hands[0].pts[0].length, 3);
   assert.ok(Math.abs(hands[0].pts[12][1] - 0.3) < 1e-6);
 });
+
+test("planSigns: dictionary words come before fingerspelling, with inflection fallback", async () => {
+  const { wordCandidates } = await import("../public/signer.js");
+  assert.ok(wordCandidates("дела").includes("дело"));
+  assert.ok(wordCandidates("маме").includes("мама"));
+  const plan = planSigns("Привет маме, Айгерим!", [], { dictionary: ["привет", "мама"] });
+  assert.deepEqual(plan.slice(0, 2).map((p) => [p.source, p.label]), [["dictionary", "привет"], ["dictionary", "мама"]]);
+  assert.ok(plan.slice(2).every((p) => p.source === "builtin"), "name is fingerspelled");
+  // recorded gesture wins over the dictionary
+  assert.equal(planSigns("привет", ["Привет"], { dictionary: ["привет"] })[0].source, "recorded");
+});
+
+test("decodeDictionarySign fits the clip into the canvas", async () => {
+  const { decodeDictionarySign } = await import("../public/signer.js");
+  const hand = (x) => [1, ...Array.from({ length: 21 }, (_, k) => [x + k * 2, 500 - k * 5, -k]).flat()];
+  const frames = decodeDictionarySign({ aspect: 0.5625, frames: [[hand(400)], [hand(700)]] }, 1.6);
+  assert.equal(frames.length, 2);
+  for (const f of frames) for (const h of f) for (const [x, y] of h.pts) assert.ok(x > 0 && x < 1 && y > 0 && y < 1);
+  assert.ok(frames[1][0].pts[0][0] > frames[0][0].pts[0][0], "motion direction kept");
+});
