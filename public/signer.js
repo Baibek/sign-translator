@@ -59,8 +59,13 @@ export function planSigns(text, labels, { builtin = true, dictionary = [] } = {}
     maxWords = Math.max(maxWords, key.split(" ").length);
   }
   const dict = new Map();
+  const dictLetters = new Map(); // fingerspelling letters recorded in the dictionary ("А", "Б", …)
   let dictMaxWords = 1;
   for (const w of dictionary) {
+    if ([...w].length === 1 && w !== w.toLocaleLowerCase("ru")) {
+      dictLetters.set(norm(w), w);
+      continue;
+    }
     const key = tokenize(w).map(norm).join(" ");
     if (!key || dict.has(key)) continue;
     dict.set(key, w);
@@ -97,10 +102,11 @@ export function planSigns(text, labels, { builtin = true, dictionary = [] } = {}
     }
     const word = words[i];
     const letters = [...word.toLocaleLowerCase("ru")];
-    const canSpell = letters.every((ch) => byKey.has(norm(ch)) || (builtin && hasDactyl(ch)));
+    const canSpell = letters.every((ch) => byKey.has(norm(ch)) || dictLetters.has(norm(ch)) || (builtin && hasDactyl(ch)));
     if (letters.length && canSpell) {
       for (const ch of letters) {
         if (byKey.has(norm(ch))) plan.push({ type: "letter", source: "recorded", label: byKey.get(norm(ch)), text: ch, word });
+        else if (dictLetters.has(norm(ch))) plan.push({ type: "letter", source: "dictionary", label: dictLetters.get(norm(ch)), text: ch, word });
         else plan.push({ type: "letter", source: "builtin", text: ch, word });
       }
     } else {
@@ -132,6 +138,38 @@ export function framePoints(f, { scale = 0.14, mirror = true } = {}) {
 }
 
 /**
+ * Recordings often catch the signer's second hand resting at the bottom edge, or a far-away false detection.
+ * Drop a hand slot that is rarely visible, much smaller, or idle near the bottom while the other hand signs.
+ */
+export function dropRestingHands(frames) {
+  const stat = {};
+  for (const s of [0, 1]) {
+    const seen = frames.map((f) => f.find((h) => h.slot === s)).filter(Boolean);
+    if (!seen.length) continue;
+    const palm = seen.reduce((a, h) => a + Math.hypot(h.pts[9][0] - h.pts[0][0], h.pts[9][1] - h.pts[0][1]), 0) / seen.length;
+    const y = seen.reduce((a, h) => a + h.pts[0][1], 0) / seen.length;
+    let move = 0;
+    for (let k = 1; k < seen.length; k++) move += Math.hypot(seen[k].pts[0][0] - seen[k - 1].pts[0][0], seen[k].pts[0][1] - seen[k - 1].pts[0][1]);
+    stat[s] = { presence: seen.length / frames.length, palm, y, move: move / palm };
+  }
+  if (!stat[0] || !stat[1]) return frames;
+  // rules in priority order; each is checked both ways
+  const rules = [
+    (a, b) => a.presence < 0.6 && b.presence >= 0.85, // rarely tracked
+    (a, b) => a.y > b.y + 0.15 && a.move <= b.move * 1.5, // hanging lower and not more active: resting hand
+    (a, b) => a.y > 0.78 && a.move < b.move * 0.35, // idle at the bottom edge
+    (a, b) => a.palm < b.palm * 0.5, // far-away false detection
+  ];
+  let victim = null;
+  for (const rule of rules) {
+    if (rule(stat[0], stat[1])) { victim = 0; break; }
+    if (rule(stat[1], stat[0])) { victim = 1; break; }
+  }
+  if (victim !== null) for (let i = 0; i < frames.length; i++) frames[i] = frames[i].filter((h) => h.slot !== victim);
+  return frames;
+}
+
+/**
  * Decode a dictionary sign file ({aspect, frames:[[ [slot, x,y,z ×21] ]]}, coords ×1000 in video space)
  * into canvas-normalized hands. The whole clip is fitted into the canvas with one scale so motion is kept.
  */
@@ -142,6 +180,7 @@ export function decodeDictionarySign(data, canvasAspect = 1.6) {
     for (let k = 0; k < 21; k++) pts.push([(flat[k * 3] / 1000) * va, flat[k * 3 + 1] / 1000, -(flat[k * 3 + 2] / 1000) * va]);
     return { slot, pts };
   }));
+  dropRestingHands(frames);
   // bounding box (in video-height units) and typical palm size
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, palm = 0, np = 0;
   for (const f of frames) for (const h of f) {
@@ -150,12 +189,32 @@ export function decodeDictionarySign(data, canvasAspect = 1.6) {
   }
   if (!np) return [];
   palm /= np;
-  // fit into the canvas (height = 1, width = canvasAspect) with margins; cap zoom so a palm is ≤ 30% of the height
-  const s = Math.min((canvasAspect * 0.8) / Math.max(x1 - x0, 1e-3), 0.72 / Math.max(y1 - y0, 1e-3), 0.3 / Math.max(palm, 1e-3));
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  return frames.map((f) => f.map((h) => ({
+  // Fit the whole clip with one scale when the motion range allows a readable hand size; otherwise keep the
+  // hand readable (palm ≈ 22% of the height) and let the view follow the hands smoothly.
+  const sFit = Math.min((canvasAspect * 0.8) / Math.max(x1 - x0, 1e-3), 0.72 / Math.max(y1 - y0, 1e-3));
+  const sHand = 0.2 / Math.max(palm, 1e-3);
+  const s = Math.min(sFit, sHand * 1.3);
+  const slots = new Set(frames.flatMap((f) => f.map((h) => h.slot)));
+  // follow only one-handed signs: for two hands the distance between them is part of the sign
+  const follow = slots.size === 1 && sFit < sHand * 0.75;
+  const scale = follow ? sHand : s;
+  const gx = (x0 + x1) / 2, gy = (y0 + y1) / 2;
+  const centroid = frames.map((f) => { // centre of the frame's hand bounding box
+    let ax = Infinity, ay = Infinity, bx = -Infinity, by = -Infinity;
+    for (const h of f) for (const [px, py] of h.pts) { ax = Math.min(ax, px); bx = Math.max(bx, px); ay = Math.min(ay, py); by = Math.max(by, py); }
+    return ax < Infinity ? [(ax + bx) / 2, (ay + by) / 2] : null;
+  });
+  const centers = centroid.map((c, i) => {
+    if (!follow) return [gx, gy];
+    let x = 0, y = 0, n = 0;
+    for (let j = Math.max(0, i - 4); j <= Math.min(centroid.length - 1, i + 4); j++) if (centroid[j]) { x += centroid[j][0]; y += centroid[j][1]; n++; }
+    if (!n) return [gx, gy];
+    // keep some of the real motion: blend the smoothed centroid with the global centre
+    return [gx + (x / n - gx) * 0.85, gy + (y / n - gy) * 0.85];
+  });
+  return frames.map((f, i) => f.map((h) => ({
     slot: h.slot,
-    pts: h.pts.map(([x, y, z]) => [0.5 + ((x - cx) * s) / canvasAspect, 0.46 + (y - cy) * s, z * s]),
+    pts: h.pts.map(([x, y, z]) => [0.5 + ((x - centers[i][0]) * scale) / canvasAspect, 0.46 + (y - centers[i][1]) * scale, z * scale]),
   })));
 }
 
@@ -174,7 +233,7 @@ export function buildClips(plan, getFrames, { aspect = 1.6, getDictionary = () =
     }
     if (p.source === "dictionary") {
       const frames = getDictionary(p.label);
-      if (frames && frames.length) clips.push({ i, frames, caption, ms: 1500, dictionary: true });
+      if (frames && frames.length) clips.push({ i, frames, caption, ms: p.type === "letter" ? 800 : 1500, dictionary: true });
       return;
     }
     const seq = getFrames(p.label);

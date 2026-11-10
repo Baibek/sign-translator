@@ -69,3 +69,13 @@ test("decodeDictionarySign fits the clip into the canvas", async () => {
   for (const f of frames) for (const h of f) for (const [x, y] of h.pts) assert.ok(x > 0 && x < 1 && y > 0 && y < 1);
   assert.ok(frames[1][0].pts[0][0] > frames[0][0].pts[0][0], "motion direction kept");
 });
+
+test("planSigns: dictionary letters are used for fingerspelling, and do not shadow words", () => {
+  const dictionary = ["Я", "А", "я", "дом"];
+  const plan = planSigns("я Ая", [], { dictionary });
+  assert.deepEqual(plan.map((p) => [p.type, p.source, p.label]), [
+    ["sign", "dictionary", "я"],
+    ["letter", "dictionary", "А"],
+    ["letter", "dictionary", "Я"],
+  ]);
+});
