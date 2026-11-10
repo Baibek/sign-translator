@@ -2,7 +2,7 @@
 // custom (DTW) recognition, AI translation, training and output.
 import { FilesetResolver, HandLandmarker, DrawingUtils } from "./vendor/tasks-vision/vision_bundle.mjs";
 import { frameFeatures, handsInFeatures, GestureClassifier, Segmenter } from "./recognizer.js";
-import { planSigns, SignPlayer } from "./signer.js";
+import { planSigns, buildClips, SignPlayer } from "./signer.js";
 
 // ---------- constants ----------
 // Relative URLs so the app works both from the Node server and as a static site (GitHub Pages subpath)
@@ -639,15 +639,16 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 function t2sColors() {
-  return { bg: cssVar("--surface-2"), bone: cssVar("--text"), joint: cssVar("--text"), left: cssVar("--accent"),
-    right: cssVar("--warn"), text: cssVar("--text"), muted: cssVar("--muted") };
+  return { bg: cssVar("--surface-2"), skin: cssVar("--skin"), skinDark: cssVar("--skin-dark"), line: cssVar("--skin-line"),
+    text: cssVar("--text"), muted: cssVar("--muted") };
 }
 function renderPlan(plan, current = -1) {
   const box = $("t2s-words");
   box.replaceChildren(...plan.map((p, i) => {
     const s = document.createElement("span");
     s.textContent = p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text;
-    if (p.type === "missing") { s.className = "missing"; s.title = "Бұл сөздің жесті жазылмаған"; }
+    if (p.type === "missing") { s.className = "missing"; s.title = "Бұл сөзді көрсету мүмкін емес"; }
+    if (p.source === "builtin") s.classList.add("builtin");
     if (i === current) s.classList.add("now");
     return s;
   }));
@@ -657,18 +658,16 @@ function playText() {
   if (!text) { signPlayer.clear("Мәтін жазыңыз"); renderPlan([]); return; }
   const plan = planSigns(text, classifier.labels());
   renderPlan(plan);
-  const playable = [];
-  plan.forEach((p, i) => {
-    if (p.type === "missing") return;
-    const frames = classifier.examples.get(p.label)?.[0];
-    if (!frames || !frames.length) return;
-    // letters are short static handshapes; words get the full recorded movement
-    playable.push({ i, frames, caption: p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text, ms: p.type === "letter" ? 700 : 1400 });
-  });
+  const playable = buildClips(plan, (label) => classifier.examples.get(label)?.[0], { aspect: signPlayer.aspect });
   const missing = plan.filter((p) => p.type === "missing").map((p) => p.text);
-  $("t2s-hint").textContent = missing.length
-    ? `Жесті жазылмаған сөздер: ${missing.join(", ")}. Оларды «Жаттығу» бөлімінде жазыңыз (немесе әріптерін жазып, дактильмен көрсетіңіз).`
-    : "Барлық сөздің жесті табылды.";
+  const spelled = [...new Set(plan.filter((p) => p.source === "builtin").map((p) => p.word))];
+  const notes = [];
+  if (spelled.length) notes.push(`Дактильмен (әріп-әріп) көрсетілді: ${spelled.join(", ")}. Кірістірілген әріп пішіндері жуық, маманмен тексеру керек.`);
+  if (plan.some((p) => p.source === "builtin" && "әғқңөұүһі".includes(p.text.toLocaleLowerCase("kk"))))
+    notes.push("Қазақтың ә, ғ, қ, ң, ө, ұ, ү, һ, і әріптері әзірге ең жақын орыс әрпінің пішінімен көрсетіледі.");
+  if (missing.length) notes.push(`Көрсету мүмкін емес: ${missing.join(", ")}.`);
+  if (!notes.length) notes.push("Барлық сөз сіз жазған жестермен көрсетілді.");
+  $("t2s-hint").textContent = notes.join(" ");
   if (!playable.length) { signPlayer.clear("Жазылған жест табылмады"); return; }
   signPlayer.play(playable, {
     speed: Number($("t2s-speed").value) || 1,
