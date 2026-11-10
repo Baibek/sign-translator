@@ -95,6 +95,29 @@
           <span>Автоматты дауыстау</span>
         </label>
       </div>
+      <section class="t2s" aria-labelledby="t2s-title">
+        <h3 id="t2s-title" class="history-title">Мәтін → Ым</h3>
+        <form id="t2s-form" class="row" autocomplete="off">
+          <label class="field grow">
+            <span>Мәтін (жазылған сөздермен)</span>
+            <input id="t2s-input" type="text" lang="ru" placeholder="мысалы: привет как дела" maxlength="300">
+          </label>
+          <label class="field">
+            <span>Жылдамдық</span>
+            <select id="t2s-speed">
+              <option value="0.6">Баяу</option>
+              <option value="1" selected>Қалыпты</option>
+              <option value="1.5">Жылдам</option>
+            </select>
+          </label>
+          <button id="t2s-play" class="btn primary" type="submit">Көрсету</button>
+          <button id="t2s-sentence" class="btn" type="button" title="Жоғарыдағы аударманы ымға айналдыру">Аударманы алу</button>
+        </form>
+        <canvas id="t2s-canvas" class="t2s-canvas" width="640" height="400" aria-label="Ым анимациясы"></canvas>
+        <p id="t2s-words" class="t2s-words" lang="ru" aria-live="polite"></p>
+        <p id="t2s-hint" class="hint">Сөз «Жаттығу» бөлімінде жазылған болса, оның жесті көрсетіледі. Белгісіз сөз әріптері жазылған болса, дактильмен (әріп-әріп) көрсетіледі.</p>
+      </section>
+
       <h3 class="history-title">Тарих</h3>
       <ol id="history" class="history" reversed></ol>
     </section>

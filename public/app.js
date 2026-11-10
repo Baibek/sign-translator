@@ -2,6 +2,7 @@
 // custom (DTW) recognition, AI translation, training and output.
 import { FilesetResolver, HandLandmarker, DrawingUtils } from "./vendor/tasks-vision/vision_bundle.mjs";
 import { frameFeatures, handsInFeatures, GestureClassifier, Segmenter } from "./recognizer.js";
+import { planSigns, SignPlayer } from "./signer.js";
 
 // ---------- constants ----------
 // Relative URLs so the app works both from the Node server and as a static site (GitHub Pages subpath)
@@ -632,6 +633,61 @@ async function checkHealth() {
   updateButtons();
 }
 
+// ---------- text → sign ----------
+let signPlayer = null;
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+function t2sColors() {
+  return { bg: cssVar("--surface-2"), bone: cssVar("--text"), joint: cssVar("--text"), left: cssVar("--accent"),
+    right: cssVar("--warn"), text: cssVar("--text"), muted: cssVar("--muted") };
+}
+function renderPlan(plan, current = -1) {
+  const box = $("t2s-words");
+  box.replaceChildren(...plan.map((p, i) => {
+    const s = document.createElement("span");
+    s.textContent = p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text;
+    if (p.type === "missing") { s.className = "missing"; s.title = "Бұл сөздің жесті жазылмаған"; }
+    if (i === current) s.classList.add("now");
+    return s;
+  }));
+}
+function playText() {
+  const text = $("t2s-input").value.trim();
+  if (!text) { signPlayer.clear("Мәтін жазыңыз"); renderPlan([]); return; }
+  const plan = planSigns(text, classifier.labels());
+  renderPlan(plan);
+  const playable = [];
+  plan.forEach((p, i) => {
+    if (p.type === "missing") return;
+    const frames = classifier.examples.get(p.label)?.[0];
+    if (!frames || !frames.length) return;
+    // letters are short static handshapes; words get the full recorded movement
+    playable.push({ i, frames, caption: p.type === "letter" ? p.text.toLocaleUpperCase("ru") : p.text, ms: p.type === "letter" ? 700 : 1400 });
+  });
+  const missing = plan.filter((p) => p.type === "missing").map((p) => p.text);
+  $("t2s-hint").textContent = missing.length
+    ? `Жесті жазылмаған сөздер: ${missing.join(", ")}. Оларды «Жаттығу» бөлімінде жазыңыз (немесе әріптерін жазып, дактильмен көрсетіңіз).`
+    : "Барлық сөздің жесті табылды.";
+  if (!playable.length) { signPlayer.clear("Жазылған жест табылмады"); return; }
+  signPlayer.play(playable, {
+    speed: Number($("t2s-speed").value) || 1,
+    onClip: (k) => renderPlan(plan, k >= 0 ? playable[k].i : -1),
+  });
+}
+function initTextToSign() {
+  signPlayer = new SignPlayer($("t2s-canvas"), { colors: t2sColors });
+  signPlayer.clear("Мәтін жазып, «Көрсету» басыңыз");
+  $("t2s-form").addEventListener("submit", (e) => { e.preventDefault(); playText(); });
+  $("t2s-sentence").addEventListener("click", () => {
+    const t = sentenceText();
+    if (!t) { $("t2s-hint").textContent = "Жоғарыда әзірге аударма жоқ."; return; }
+    $("t2s-input").value = t;
+    playText();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { if (!signPlayer.playing) signPlayer.clear(); });
+}
+
 // ---------- init ----------
 function init() {
   // restore gestures + settings
@@ -648,6 +704,7 @@ function init() {
   if (settings.signLang) el.signLang.value = settings.signLang;
   renderLabels();
   renderSentence();
+  initTextToSign();
 
   // events
   el.btnCamera.addEventListener("click", startCamera);

@@ -196,3 +196,12 @@ code { font-size: .85em; background: var(--surface-2); padding: 1px 5px; border-
   * { animation: none !important; transition: none !important; }
 }
 .topbar h1 .sub { font-weight: 400; font-size: 0.85rem; color: var(--muted, inherit); margin-left: 6px; }
+
+/* Text → sign */
+.t2s { display: grid; gap: 10px; margin-top: 8px; }
+.t2s .row { align-items: end; }
+.t2s-canvas { width: 100%; max-width: 100%; aspect-ratio: 16 / 10; height: auto; border-radius: var(--radius); background: var(--surface-2); display: block; }
+.t2s-words { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; min-height: 1.6em; }
+.t2s-words span { padding: 2px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: .9rem; }
+.t2s-words span.now { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.t2s-words span.missing { color: var(--warn); border-style: dashed; }
